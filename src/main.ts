@@ -46,10 +46,11 @@ interface PresetPlayer {
 // ===================== 常量配置 =====================
 
 const BOARD_SIZE = 24
-const MAX_ROUNDS = 20
+let MAX_ROUNDS = 20
 const START_MONEY = 2000
 const LEADERBOARD_FILE = 'leaderboard.json'
 const PRESETS_FILE = 'presets.json'
+const SETTINGS_FILE = 'settings.json'
 
 const CHANCE_CARDS = [
   { name: '生日红包', desc: '收到亲戚的红包，获得 200 元！', effect: 'money', value: 200, icon: '🧧' },
@@ -114,6 +115,7 @@ app.innerHTML = `
     <p>请横屏游玩，体验更佳哦！</p>
   </div>
   <div id="home-screen" class="screen active">
+    <button id="btn-settings" class="btn-home-settings" title="设置">⚙️</button>
     <div class="home-content">
       <div class="logo-icon">🎠</div>
       <h1>糖果大富翁</h1>
@@ -170,6 +172,7 @@ app.innerHTML = `
           <button id="btn-roll" class="btn-action btn-primary"><span class="btn-icon">🎲</span><span>掷骰子</span></button>
           <div class="message-area"><p id="game-message">点击掷骰子开始游戏！</p></div>
         </div>
+        <div id="game-log" class="game-log"></div>
       </div>
     </div>
   </div>
@@ -202,7 +205,7 @@ app.innerHTML = `
       <div class="rules-body">
         <div class="rule-section">
           <div class="rule-title">🎯 游戏目标</div>
-          <p>在 20 个回合内，通过购买地产、收取租金，成为最富有的小小富翁！</p>
+          <p>在 <span id="rules-max-rounds">20</span> 个回合内，通过购买地产、收取租金，成为最富有的小小富翁！</p>
         </div>
         <div class="rule-section">
           <div class="rule-title">🎲 怎么玩</div>
@@ -215,7 +218,7 @@ app.innerHTML = `
         </div>
         <div class="rule-section">
           <div class="rule-title">🏠 地产升级</div>
-          <p>拥有同颜色 2 间房子 → 租金升级<br>拥有同颜色 4 间房子 → 租金满级</p>
+          <p>拥有同颜色 2 间房子 → 租金翻倍<br>拥有同颜色 4 间房子 → 租金 4 倍</p>
         </div>
         <div class="rule-section">
           <div class="rule-title">❓ 机会卡</div>
@@ -259,6 +262,7 @@ const currentPlayerIcon = document.querySelector<HTMLSpanElement>('#current-play
 const currentPlayerName = document.querySelector<HTMLSpanElement>('#current-player-name')!
 const btnRoll = document.querySelector<HTMLButtonElement>('#btn-roll')!
 const gameMessage = document.querySelector<HTMLParagraphElement>('#game-message')!
+const gameLogEl = document.querySelector<HTMLDivElement>('#game-log')!
 const modal = document.querySelector<HTMLDivElement>('#modal')!
 const modalIcon = document.querySelector<HTMLDivElement>('#modal-icon')!
 const modalTitle = document.querySelector<HTMLHeadingElement>('#modal-title')!
@@ -272,6 +276,7 @@ const btnCloseRules = document.querySelector<HTMLButtonElement>('#btn-close-rule
 const nameInputsEl = document.querySelector<HTMLDivElement>('#name-inputs')!
 const btnPresets = document.querySelector<HTMLButtonElement>('#btn-presets')!
 const btnLeaderboard = document.querySelector<HTMLButtonElement>('#btn-leaderboard')!
+const btnSettings = document.querySelector<HTMLButtonElement>('#btn-settings')!
 const leaderboardListEl = document.querySelector<HTMLDivElement>('#leaderboard-list')!
 const leaderboardEmptyEl = document.querySelector<HTMLDivElement>('#leaderboard-empty')!
 
@@ -460,6 +465,27 @@ async function savePresets(presets: PresetPlayer[]) {
   }
 }
 
+async function loadSettings(): Promise<{ maxRounds?: number }> {
+  try {
+    const fileExists = await exists(SETTINGS_FILE, { baseDir: BaseDirectory.AppData })
+    if (!fileExists) return {}
+    const text = await readTextFile(SETTINGS_FILE, { baseDir: BaseDirectory.AppData })
+    return JSON.parse(text) as { maxRounds?: number }
+  } catch (e) {
+    console.error('loadSettings failed:', e)
+    return {}
+  }
+}
+
+async function saveSettings(settings: { maxRounds: number }) {
+  try {
+    await mkdir('', { baseDir: BaseDirectory.AppData, recursive: true })
+    await writeTextFile(SETTINGS_FILE, JSON.stringify(settings, null, 2), { baseDir: BaseDirectory.AppData })
+  } catch (e) {
+    console.error('saveSettings failed:', e)
+  }
+}
+
 function formatDate(dateStr: string) {
   const d = new Date(dateStr)
   return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
@@ -597,12 +623,12 @@ function renderPresetSelector(onSelect: (preset: PresetPlayer) => void) {
     showModal({
       icon: '👤',
       title: '选择常见玩家',
-      html: presets.map((p) => `
+      html: `<div class="preset-list">${presets.map((p) => `
         <div class="preset-item preset-selectable" data-id="${p.id}">
           <div class="preset-avatar"></div>
           <div class="preset-name">${p.name}</div>
         </div>
-      `).join(''),
+      `).join('')}</div>`,
       buttons: [{ text: '取消', className: 'btn-secondary', onClick: () => {} }],
     })
 
@@ -626,18 +652,20 @@ function renderPresetSelector(onSelect: (preset: PresetPlayer) => void) {
 
 // ===================== 姓名输入 =====================
 
-function renderNameInputs(count: number) {
+function renderNameInputs(count: number, customNames?: string[], customAvatars?: string[]) {
   nameInputsEl.innerHTML = ''
-  selectedAvatars = AVATARS.slice(0, count)
+  selectedAvatars = customAvatars ? customAvatars.slice(0, count) : AVATARS.slice(0, count)
   for (let i = 0; i < count; i++) {
     const row = document.createElement('div')
     row.className = 'name-input-row'
 
+    const avatar = selectedAvatars[i] || AVATARS[i]
+
     const avatarEl = document.createElement('div')
     avatarEl.className = 'name-input-avatar'
     avatarEl.style.background = COLORS[i]
-    avatarEl.textContent = AVATARS[i]
     avatarEl.style.cursor = 'pointer'
+    renderAvatar(avatarEl, avatar, COLORS[i])
 
     const fileInput = document.createElement('input')
     fileInput.type = 'file'
@@ -663,7 +691,7 @@ function renderNameInputs(count: number) {
     input.id = `name-input-${i}`
     input.placeholder = NAMES[i]
     input.maxLength = 8
-    input.value = NAMES[i]
+    input.value = customNames?.[i] || NAMES[i]
 
     const selectBtn = document.createElement('button')
     selectBtn.className = 'btn-preset-select'
@@ -703,8 +731,8 @@ function renderBoard() {
     grid[pos.row][pos.col] = cell
   })
 
-  grid.forEach((row) => {
-    row.forEach((cell) => {
+  grid.forEach((row, rowIdx) => {
+    row.forEach((cell, colIdx) => {
       const el = document.createElement('div')
       el.className = 'cell'
       if (cell) {
@@ -745,8 +773,8 @@ function renderBoard() {
             const lines = [
               `购买价格：${formatMoney(cell.price)}`,
               `基础租金：${formatMoney(cell.rent[0])}`,
-              `升级租金：${formatMoney(cell.rent[1])}`,
-              `满级租金：${formatMoney(cell.rent[2])}`,
+              `2间翻倍：${formatMoney(cell.rent[0] * 2)}`,
+              `4间满级：${formatMoney(cell.rent[0] * 4)}`,
             ]
             if (owner) {
               lines.push(``, `当前地主：${owner.name}`)
@@ -759,6 +787,32 @@ function renderBoard() {
             })
           }
         })
+      } else if (rowIdx >= 1 && rowIdx <= 4 && colIdx >= 1 && colIdx <= 6) {
+        // Center decorative area
+        const deco = document.createElement('div')
+        deco.className = 'board-deco'
+        deco.innerHTML = `
+          <svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="decoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#ffd1dc;stop-opacity:0.35" />
+                <stop offset="100%" style="stop-color:#c7ceea;stop-opacity:0.35" />
+              </linearGradient>
+            </defs>
+            <circle cx="60" cy="60" r="45" fill="url(#decoGrad)" />
+            <path d="M60 30 Q75 45 75 60 Q75 80 60 90 Q45 80 45 60 Q45 45 60 30" fill="rgba(255,255,255,0.5)" />
+            <circle cx="50" cy="55" r="4" fill="rgba(255,255,255,0.7)" />
+            <circle cx="70" cy="55" r="4" fill="rgba(255,255,255,0.7)" />
+            <path d="M55 68 Q60 73 65 68" stroke="rgba(255,255,255,0.6)" stroke-width="2" fill="none" stroke-linecap="round" />
+            <path d="M35 60 Q30 50 40 45" stroke="rgba(255,255,255,0.4)" stroke-width="2" fill="none" stroke-linecap="round" />
+            <path d="M85 60 Q90 50 80 45" stroke="rgba(255,255,255,0.4)" stroke-width="2" fill="none" stroke-linecap="round" />
+            <circle cx="25" cy="75" r="6" fill="rgba(255,209,220,0.4)" />
+            <circle cx="95" cy="75" r="6" fill="rgba(199,206,234,0.4)" />
+            <circle cx="60" cy="20" r="5" fill="rgba(255,245,200,0.4)" />
+            <circle cx="60" cy="100" r="5" fill="rgba(200,247,220,0.4)" />
+          </svg>
+        `
+        el.appendChild(deco)
       }
       boardEl.appendChild(el)
     })
@@ -793,7 +847,8 @@ function updateTokens() {
       dot.className = 'owner-dot'
       dot.style.background = player.color
       dot.style.boxShadow = `0 0 0 2px #fff`
-      dot.title = `${player.name} 的 ${cell.name}${lvl > 0 ? '（' + ['普通', '升级', '满级'][lvl] + '）' : ''}`
+      const multiplier = getUpgradeMultiplier(player, cell.id)
+      dot.title = `${player.name} 的 ${cell.name}${multiplier > 1 ? '（' + (multiplier === 4 ? '4倍' : '2倍') + '）' : ''}`
       // 统一圆点外观，用边框粗细区分等级
       dot.style.borderWidth = `${lvl + 1}px`
       dot.style.borderColor = 'rgba(255,255,255,0.6)'
@@ -853,6 +908,32 @@ function setMessage(msg: string) {
   gameMessage.textContent = msg
 }
 
+function addGameLog(icon: string, text: string, color?: string, playerName?: string) {
+  if (!gameLogEl) return
+  const existing = Array.from(gameLogEl.children) as HTMLElement[]
+  existing.forEach((el) => el.classList.add('shift'))
+
+  const nameHtml = playerName
+    ? `<span class="game-log-name" style="color:${color || '#333'}">${playerName}</span>`
+    : ''
+  const item = document.createElement('div')
+  item.className = 'game-log-item'
+  item.innerHTML = `<span class="game-log-icon" style="color:${color || '#666'}">${icon}</span><span class="game-log-text">${nameHtml}${text}</span>`
+  gameLogEl.prepend(item)
+  while (gameLogEl.children.length > 3) {
+    gameLogEl.removeChild(gameLogEl.lastChild!)
+  }
+
+  // Force reflow for WebKit
+  item.offsetHeight
+  existing.forEach((el) => el.classList.remove('shift'))
+  item.classList.add('flash')
+}
+
+function clearGameLog() {
+  if (gameLogEl) gameLogEl.innerHTML = ''
+}
+
 // ===================== 游戏核心逻辑 =====================
 
 function initGame(playerCount: number, customNames?: string[]) {
@@ -869,6 +950,8 @@ function initGame(playerCount: number, customNames?: string[]) {
   }))
   currentPlayerIndex = 0
   round = 1
+  ;(window as any).players = players
+  ;(window as any).currentPlayerIndex = currentPlayerIndex
   isAnimating = false
   pendingAction = null
   renderBoard()
@@ -879,6 +962,7 @@ function initGame(playerCount: number, customNames?: string[]) {
   lastDiceEl.textContent = '-'
   btnRoll.disabled = false
   setMessage('点击掷骰子开始游戏！')
+  clearGameLog()
   showScreen('game')
 }
 
@@ -903,20 +987,20 @@ async function movePlayer(p: Player, steps: number) {
   }
 }
 
-function getUpgradeLevel(player: Player, cellId: number): number {
+function getUpgradeMultiplier(player: Player, cellId: number): number {
   const cell = CELLS[cellId]
-  if (!cell || !cell.color) return 0
+  if (!cell || !cell.color) return 1
   const group = CELLS.filter((c) => c.color === cell.color && c.type === 'property')
   const ownCount = group.filter((c) => player.properties.includes(c.id)).length
-  if (ownCount === 4) return 2
-  if (ownCount >= 2) return 1
-  return 0
+  if (ownCount === 4) return 4
+  if (ownCount >= 2) return 2
+  return 1
 }
 
 function getRent(cell: Cell, owner: Player): number {
   if (!cell.rent) return 0
-  const lvl = getUpgradeLevel(owner, cell.id)
-  return cell.rent[lvl] || cell.rent[0]
+  const multiplier = getUpgradeMultiplier(owner, cell.id)
+  return cell.rent[0] * multiplier
 }
 
 async function doBankruptcyCheck() {
@@ -935,6 +1019,7 @@ async function endTurn() {
     currentPlayerIndex = 0
     round++
   }
+  ;(window as any).currentPlayerIndex = currentPlayerIndex
 
   if (round > MAX_ROUNDS) {
     endGame()
@@ -944,7 +1029,20 @@ async function endTurn() {
   roundDisplay.textContent = `${round} / ${MAX_ROUNDS}`
   renderPlayers()
   updateCurrentPlayerBadge()
+
+  const p = players[currentPlayerIndex]
+  if (p.jailTurns > 0 && p.position === 6) {
+    btnRoll.disabled = true
+    btnRoll.innerHTML = '<span>监狱中</span>'
+    setMessage(`${p.name} 还在监狱休息，本回合跳过~`)
+    await sleep(800)
+    isAnimating = false
+    setTimeout(() => playTurn(), 0)
+    return
+  }
+
   btnRoll.disabled = false
+  btnRoll.innerHTML = '<span class="btn-icon">🎲</span><span>掷骰子</span>'
   setMessage('轮到你了，点击掷骰子！')
 }
 
@@ -1001,11 +1099,14 @@ async function handleProperty(cell: Cell) {
 
   const owner = players.find((pl) => pl.properties.includes(cell.id))
   if (owner && owner.id !== p.id) {
+    const multiplier = getUpgradeMultiplier(owner, cell.id)
     const rent = getRent(cell, owner)
     p.money -= rent
     owner.money += rent
     playSound('cash')
-    setMessage(`走到 ${cell.name}，支付给 ${owner.name} 租金 ${formatMoney(rent)}`)
+    const multiplierText = multiplier > 1 ? `（${multiplier === 4 ? '4倍' : '2倍'}）` : ''
+    setMessage(`走到 ${cell.name}，支付给 ${owner.name} 租金 ${formatMoney(rent)}${multiplierText}`)
+    addGameLog('💸', `支付 ${owner.name} 租金 -${formatMoney(rent)}${multiplierText}`, owner.color, p.name)
     renderPlayers()
     await sleep(800)
   } else if (!owner) {
@@ -1018,9 +1119,17 @@ async function handleProperty(cell: Cell) {
         p.properties.push(cell.id)
         playSound('cash')
         setMessage(`成功购买 ${cell.name}！`)
+        addGameLog('🏠', `购买 ${cell.name} -${formatMoney(price)}`, p.color, p.name)
         renderPlayers()
         updateTokens()
         hideModal()
+        // Check for monopoly upgrade and notify all players
+        const multiplier = getUpgradeMultiplier(p, cell.id)
+        if (multiplier === 2) {
+          addGameLog('📈', `集齐2间${cell.name.slice(0, -1)}色房子，租金翻倍！`, p.color, p.name)
+        } else if (multiplier === 4) {
+          addGameLog('🌟', `集齐4间${cell.name.slice(0, -1)}色房子，租金4倍！`, p.color, p.name)
+        }
         if (resolvePurchase) resolvePurchase()
       }
       showModal({
@@ -1045,6 +1154,7 @@ async function handleProperty(cell: Cell) {
               pendingAction = null
               hideModal()
               setMessage(`放弃了 ${cell.name}`)
+              addGameLog('🚫', `放弃购买 ${cell.name}`, p.color, p.name)
               if (resolvePurchase) resolvePurchase()
             },
           },
@@ -1071,6 +1181,9 @@ async function handleChance() {
   p.money += card.value
   playSound('cash')
   setMessage(`抽到机会卡：${card.name}`)
+  const sign = card.value >= 0 ? '+' : '-'
+  const absValue = Math.abs(card.value)
+  addGameLog(card.icon, `${card.name} ${sign}${formatMoney(absValue)}`, p.color, p.name)
   renderPlayers()
   await showModalAsync({
     icon: card.icon,
@@ -1087,10 +1200,12 @@ async function handleSpecial(cell: Cell) {
     p.position = 6
     p.jailTurns = 1
     updateTokens()
+    addGameLog('🚔', '去监狱休息一回合', '#333', p.name)
     await sleep(600)
   } else if (cell.type === 'jail') {
     if (p.jailTurns > 0) {
       setMessage('在监狱里休息一回合~')
+      addGameLog('😴', '在监狱休息一回合', '#666', p.name)
       p.jailTurns--
       await sleep(600)
     } else {
@@ -1104,6 +1219,7 @@ async function handleSpecial(cell: Cell) {
     p.money += 200
     playSound('cash')
     setMessage('经过起点！获得奖励 200 元')
+    addGameLog('🏁', `经过起点 +${formatMoney(200)}`, p.color, p.name)
     renderPlayers()
     await sleep(400)
   }
@@ -1116,11 +1232,13 @@ async function playTurn() {
   btnRoll.blur()
   gameScreen.focus()
   pendingAction = null
+  lastDiceEl.textContent = '-'
 
   const p = players[currentPlayerIndex]
 
   if (p.jailTurns > 0 && p.position === 6) {
     setMessage(`${p.name} 还在监狱休息，本回合跳过~`)
+    addGameLog('😴', '监狱中，本回合跳过', '#666', p.name)
     await sleep(600)
     p.jailTurns--
     isAnimating = false
@@ -1157,6 +1275,13 @@ document.querySelectorAll<HTMLButtonElement>('.btn-player').forEach((btn) => {
   })
 })
 
+document.querySelector<HTMLButtonElement>('#btn-restart')!.addEventListener('click', () => {
+  const names = players.map((p) => p.name)
+  const avatars = players.map((p) => p.avatar)
+  renderNameInputs(selectedPlayerCount, names, avatars)
+  showScreen('name')
+})
+
 document.querySelector<HTMLButtonElement>('#btn-name-back')!.addEventListener('click', () => {
   showScreen('home')
 })
@@ -1175,7 +1300,7 @@ btnRoll.addEventListener('click', () => {
   playTurn()
 })
 
-function handleSpace(e: KeyboardEvent) {
+function handleKey(e: KeyboardEvent) {
   if (e.code === 'Space') {
     e.preventDefault()
     if (e.repeat) return
@@ -1194,12 +1319,31 @@ function handleSpace(e: KeyboardEvent) {
       playTurn()
     }
   }
+  if (e.code === 'Escape') {
+    if (!modal.classList.contains('hidden')) {
+      const secondaryBtn = modalButtons.querySelector('.btn-secondary') as HTMLButtonElement | null
+      if (secondaryBtn) {
+        secondaryBtn.click()
+      } else {
+        hideModal()
+      }
+      return
+    }
+    if (pendingAction) {
+      pendingAction = null
+      hideModal()
+      setMessage('放弃了购买')
+      return
+    }
+  }
 }
 
-window.addEventListener('keydown', handleSpace)
+window.addEventListener('keydown', handleKey)
 
 document.querySelector<HTMLButtonElement>('#btn-restart')!.addEventListener('click', () => {
-  renderNameInputs(selectedPlayerCount)
+  const names = players.map((p) => p.name)
+  const avatars = players.map((p) => p.avatar)
+  renderNameInputs(selectedPlayerCount, names, avatars)
   showScreen('name')
 })
 
@@ -1207,8 +1351,17 @@ document.querySelector<HTMLButtonElement>('#btn-end-home')!.addEventListener('cl
   showScreen('home')
 })
 
-document.querySelector<HTMLButtonElement>('#btn-back')!.addEventListener('click', () => {
-  showScreen('home')
+document.querySelector<HTMLButtonElement>('#btn-back')!.addEventListener('click', async () => {
+  const confirmed = await showModalAsync({
+    icon: '🏠',
+    title: '返回首页？',
+    text: '当前游戏进度将不会保存，确定要返回首页吗？',
+    buttons: [
+      { text: '取消', className: 'btn-secondary', value: false },
+      { text: '确定', className: 'btn-primary', value: true },
+    ],
+  })
+  if (confirmed) showScreen('home')
 })
 
 btnRules.addEventListener('click', () => {
@@ -1234,6 +1387,54 @@ btnLeaderboard.addEventListener('click', async () => {
   showScreen('leaderboard')
 })
 
+btnSettings.addEventListener('click', () => {
+  showModal({
+    icon: '⚙️',
+    title: '游戏设置',
+    html: `
+      <div style="text-align:left;margin-bottom:8px;">
+        <label style="display:block;font-size:14px;color:#666;margin-bottom:8px;">总回合数</label>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <input type="range" id="settings-rounds-range" min="5" max="50" step="5" value="${MAX_ROUNDS}" style="flex:1;cursor:pointer;">
+          <span id="settings-rounds-value" style="font-size:18px;font-weight:700;color:#333;min-width:40px;text-align:right;">${MAX_ROUNDS}</span>
+        </div>
+        <p style="font-size:12px;color:#999;margin-top:8px;">调整回合数可以加快或延长游戏时间~</p>
+      </div>
+    `,
+    buttons: [
+      {
+        text: '取消',
+        className: 'btn-secondary',
+        onClick: () => {},
+      },
+      {
+        text: '保存',
+        className: 'btn-primary',
+        onClick: () => {
+          const input = modalText.querySelector('#settings-rounds-range') as HTMLInputElement
+          const val = parseInt(input?.value || '20', 10)
+          if (val >= 5 && val <= 50) {
+            MAX_ROUNDS = val
+            const rulesMaxRounds = document.querySelector('#rules-max-rounds')
+            if (rulesMaxRounds) rulesMaxRounds.textContent = String(MAX_ROUNDS)
+            saveSettings({ maxRounds: MAX_ROUNDS })
+          }
+        },
+      },
+    ],
+  })
+
+  setTimeout(() => {
+    const range = modalText.querySelector('#settings-rounds-range') as HTMLInputElement
+    const valueDisplay = modalText.querySelector('#settings-rounds-value') as HTMLSpanElement
+    if (range && valueDisplay) {
+      range.addEventListener('input', () => {
+        valueDisplay.textContent = range.value
+      })
+    }
+  }, 0)
+})
+
 document.querySelector<HTMLButtonElement>('#btn-leaderboard-back')!.addEventListener('click', () => {
   showScreen('home')
 })
@@ -1242,5 +1443,38 @@ window.addEventListener('resize', () => {
   // 可在此做额外适配
 })
 
+// Expose key state for e2e testing
+;(window as any).players = players
+;(window as any).updateTokens = updateTokens
+;(window as any).currentPlayerIndex = currentPlayerIndex
+;(window as any).MAX_ROUNDS = MAX_ROUNDS
+;(window as any).endGame = endGame
+;(window as any).renderNameInputs = renderNameInputs
+;(window as any).getRent = getRent
+;(window as any).getUpgradeMultiplier = getUpgradeMultiplier
+;(window as any).CELLS = CELLS
+;(window as any).__testTriggerRent = (ownerIndex: number, payerIndex: number, cellId: number) => {
+  const owner = players[ownerIndex]
+  const payer = players[payerIndex]
+  const cell = CELLS[cellId]
+  if (!cell || !cell.rent || !owner || !payer) return null
+  const multiplier = getUpgradeMultiplier(owner, cellId)
+  const rent = getRent(cell, owner)
+  payer.money -= rent
+  owner.money += rent
+  const multiplierText = multiplier > 1 ? `（${multiplier === 4 ? '4倍' : '2倍'}）` : ''
+  setMessage(`走到 ${cell.name}，支付给 ${owner.name} 租金 ${formatMoney(rent)}${multiplierText}`)
+  addGameLog('💸', `支付 ${owner.name} 租金 -${formatMoney(rent)}${multiplierText}`, owner.color, payer.name)
+  renderPlayers()
+  return { rent, multiplier }
+}
+
 // 初始显示首页
+loadSettings().then((settings) => {
+  if (settings.maxRounds && settings.maxRounds >= 5 && settings.maxRounds <= 50) {
+    MAX_ROUNDS = settings.maxRounds
+    const rulesMaxRounds = document.querySelector('#rules-max-rounds')
+    if (rulesMaxRounds) rulesMaxRounds.textContent = String(MAX_ROUNDS)
+  }
+})
 showScreen('home')
